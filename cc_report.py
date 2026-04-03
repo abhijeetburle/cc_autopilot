@@ -38,6 +38,8 @@ def load_report_data(ledger_path: str) -> tuple[list[dict], dict]:
                     "amt":   amt,
                     "pct":   float(row.get("% Reward", 0) or 0),
                     "src":   row.get("Source PDF", ""),
+                    "bank":  row.get("Bank", "Unknown Bank"),
+                    "card":  row.get("Card", "Unknown Card"),
                 })
 
     # Aggregations
@@ -266,6 +268,8 @@ select:focus{{border-color:var(--orange);}}
     <option value="7">July</option><option value="8">August</option><option value="9">September</option>
     <option value="10">October</option><option value="11">November</option><option value="12">December</option>
   </select>
+  <select id="fBank" onchange="applyFilters()"><option value="all">All Banks</option></select>
+  <select id="fCard" onchange="applyFilters()"><option value="all">All Cards</option></select>
   <select id="fCat" onchange="applyFilters()"><option value="all">All Categories</option></select>
   <select id="fSubcat" onchange="applyFilters()"><option value="all">All Subcategories</option></select>
   <div class="filter-sep"></div>
@@ -287,7 +291,13 @@ select:focus{{border-color:var(--orange);}}
   </div>
   <div class="chart-row cols-2">
     <div class="chart-card"><div class="chart-title">Top 10 Categories by Spend</div><div class="chart-sub">All-time totals</div><div id="cat-bars"></div></div>
-    <div class="chart-card"><div class="chart-title">Cardholder Spend Split</div><div class="chart-sub">Primary vs Add-on cardholder</div><canvas id="holderChart" height="200"></canvas></div>
+    <div class="chart-card">
+      <div class="chart-title">Spend by Card &amp; Bank</div>
+      <div class="chart-sub">Split across all cards and banks</div>
+      <canvas id="cardSplitChart" height="100"></canvas>
+      <div style="margin-top:16px;"><canvas id="holderChart" height="100"></canvas></div>
+      <div style="font-size:10px;color:var(--text3);font-family:'Poppins',sans-serif;margin-top:8px;text-align:center;">Bottom: Primary vs Add-on cardholder</div>
+    </div>
   </div>
 </div>
 <div class="panel" id="panel-yoy">
@@ -332,7 +342,7 @@ select:focus{{border-color:var(--orange);}}
   <div class="section-title">Transaction Detail</div>
   <div class="chart-card"><div class="chart-title" id="detail-title">All Transactions</div><div class="chart-sub" id="detail-sub">Most recent 500 · use filters to narrow</div>
     <div class="detail-wrap" style="margin-top:16px;">
-      <table class="data-table"><thead><tr><th>Date</th><th>Description</th><th>Category</th><th>Subcategory</th><th style="text-align:right">Amount</th><th style="text-align:right">Points</th><th style="text-align:right">Rate</th></tr></thead><tbody id="detail-tbody"></tbody></table>
+      <table class="data-table"><thead><tr><th>Date</th><th>Description</th><th>Card</th><th>Category</th><th>Subcategory</th><th style="text-align:right">Amount</th><th style="text-align:right">Points</th><th style="text-align:right">Rate</th></tr></thead><tbody id="detail-tbody"></tbody></table>
     </div>
   </div>
 </div>
@@ -351,6 +361,10 @@ const MONTHS=['','Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','No
 Chart.defaults.font.family="'Poppins',Arial,sans-serif";Chart.defaults.color='#8a8880';
 const catSel=document.getElementById('fCat');
 CATS.forEach(c=>{{const o=document.createElement('option');o.value=c;o.textContent=c;catSel.appendChild(o);}});
+const bankSel=document.getElementById('fBank');
+[...new Set(RAW.rows.map(r=>r.bank||'Unknown'))].sort().forEach(b=>{{const o=document.createElement('option');o.value=b;o.textContent=b;bankSel.appendChild(o);}});
+const cardSel=document.getElementById('fCard');
+[...new Set(RAW.rows.map(r=>r.card||'Unknown'))].sort().forEach(c=>{{const o=document.createElement('option');o.value=c;o.textContent=c;cardSel.appendChild(o);}});
 const fc=n=>{{if(n>=10000000)return'₹'+(n/10000000).toFixed(2)+'Cr';if(n>=100000)return'₹'+(n/100000).toFixed(2)+'L';if(n>=1000)return'₹'+(n/1000).toFixed(1)+'K';return'₹'+n.toFixed(0);}};
 const fp=n=>n>=1000?(n/1000).toFixed(1)+'K pts':n+' pts';
 let filteredRows=RAW.rows;const charts={{}};
@@ -360,7 +374,14 @@ function applyFilters(){{
   subcatSel.innerHTML='<option value="all">All Subcategories</option>';
   [...new Set(RAW.rows.filter(r=>fCat==='all'||r.cat===fCat).map(r=>r.subcat))].sort().forEach(s=>{{const o=document.createElement('option');o.value=s;o.textContent=s;subcatSel.appendChild(o);}});
   if(prev!=='all')subcatSel.value=prev;const fSubcat=subcatSel.value;
-  filteredRows=RAW.rows.filter(r=>(fYear==='all'||r.year==fYear)&&(fMonth==='all'||r.month==fMonth)&&(fCat==='all'||r.cat===fCat)&&(fSubcat==='all'||r.subcat===fSubcat));
+  const fBank=document.getElementById('fBank').value;
+  const fCard=document.getElementById('fCard').value;
+  filteredRows=RAW.rows.filter(r=>
+    (fYear==='all'||r.year==fYear)&&(fMonth==='all'||r.month==fMonth)&&
+    (fBank==='all'||(r.bank||'Unknown')===fBank)&&
+    (fCard==='all'||(r.card||'Unknown')===fCard)&&
+    (fCat==='all'||r.cat===fCat)&&(fSubcat==='all'||r.subcat===fSubcat)
+  );
   document.getElementById('filter-count').textContent=filteredRows.length+' transactions';
   renderCurrent();
 }}
@@ -424,7 +445,7 @@ function renderDetail(){{
   const disp=filteredRows.slice().sort((a,b)=>{{if(b.year!==a.year)return b.year-a.year;if(b.month!==a.month)return b.month-a.month;return b.day-a.day;}}).slice(0,500);
   document.getElementById('detail-title').textContent=`Transactions — showing ${{Math.min(filteredRows.length,500)}} of ${{filteredRows.length}}`;
   document.getElementById('detail-sub').textContent=filteredRows.length>500?'Showing most recent 500. Use filters to narrow.':'';
-  document.getElementById('detail-tbody').innerHTML=disp.map(r=>`<tr><td class="num dim">${{r.date}}</td><td style="max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${{r.desc}}">${{r.desc}}</td><td><span class="badge" style="background:${{CAT_COLOR[r.cat]}}18;color:${{CAT_COLOR[r.cat]}};font-size:9px;">${{r.cat}}</span></td><td class="dim" style="font-size:11px;font-family:'Poppins',sans-serif;">${{r.subcat}}</td><td class="num or" style="text-align:right">${{fc(r.amt)}}</td><td class="num gr" style="text-align:right">${{r.pts||'—'}}</td><td class="num" style="text-align:right;color:${{r.pct>3?'var(--green)':r.pct>0?'var(--text3)':'var(--orange)'}}">${{r.pct>0?r.pct.toFixed(2)+' /₹100':'—'}}</td></tr>`).join('');
+  document.getElementById('detail-tbody').innerHTML=disp.map(r=>`<tr><td class="num dim">${{r.date}}</td><td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${{r.desc}}">${{r.desc}}</td><td style="font-size:10px;color:var(--text3);font-family:'Poppins',sans-serif;white-space:nowrap;">${{r.card||''}}</td><td><span class="badge" style="background:${{CAT_COLOR[r.cat]}}18;color:${{CAT_COLOR[r.cat]}};font-size:9px;">${{r.cat}}</span></td><td class="dim" style="font-size:11px;font-family:'Poppins',sans-serif;">${{r.subcat}}</td><td class="num or" style="text-align:right">${{fc(r.amt)}}</td><td class="num gr" style="text-align:right">${{r.pts||'—'}}</td><td class="num" style="text-align:right;color:${{r.pct>3?'var(--green)':r.pct>0?'var(--text3)':'var(--orange)'}}">${{r.pct>0?r.pct.toFixed(2)+' /₹100':'—'}}</td></tr>`).join('');
 }}
 applyFilters();renderOverview();
 </script>

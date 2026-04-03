@@ -19,7 +19,7 @@ FIELDNAMES = [
     "Year", "Month", "Day", "Date", "Cardholder",
     "Transaction Description", "Category", "SubCategory",
     "Reward Points", "Amount (Rs.)", "Is Credit",
-    "% Reward", "Notes", "Source PDF"
+    "% Reward", "Notes", "Source PDF", "Bank", "Card"
 ]
 
 
@@ -144,6 +144,8 @@ def txn_to_ledger_row(txn: dict, config: dict) -> dict:
     sub  = txn.get("subcategory", "Others")
     notes = txn.get("notes", "")
     src   = txn.get("source_pdf", "")
+    bank  = config.get("card", {}).get("bank", "Unknown Bank")
+    card  = config.get("card", {}).get("name", "Unknown Card")
 
     return {
         "Year":                   year,
@@ -160,6 +162,8 @@ def txn_to_ledger_row(txn: dict, config: dict) -> dict:
         "% Reward":               pct,
         "Notes":                  notes,
         "Source PDF":             src,
+        "Bank":                   bank,
+        "Card":                   card,
     }
 
 
