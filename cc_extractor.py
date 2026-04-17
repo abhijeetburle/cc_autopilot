@@ -74,7 +74,7 @@ def extract_statement_metadata(pdf_text: str, config: dict) -> dict:
     date_patterns = [
         r"Statement\s+Date[:\s]+(\d{2}/\d{2}/\d{4})",
         r"Statement\s+Date[:\s]+(\d{2}-\d{2}-\d{4})",
-        r"Statement\s+Date[:\s]+(\d{2}\s+\w+\s+\d{4})",
+        r"Statement\s+Date[:\s]+(\d{1,2}\s+\w+,?\s+\d{4})",
         r"Billing\s+Date[:\s]+(\d{2}/\d{2}/\d{4})",
         r"Date\s+of\s+Statement[:\s]+(\d{2}/\d{2}/\d{4})",
     ]
@@ -123,7 +123,9 @@ def parse_date_string(date_str: str, date_format: str = "%d/%m/%Y") -> str:
         "%d-%b-%Y",
         "%Y-%m-%d",
         "%d %b %Y",
+        "%d %b, %Y",
         "%d %B %Y",
+        "%d %B, %Y",
     ]
     for fmt in formats:
         try:
@@ -307,26 +309,52 @@ def parse_transaction_row(row_text: str, config: dict) -> Optional[dict]:
     }
 
 
-def extract_bonus_points(pdf_text: str, config: dict, source_pdf: str) -> list[dict]:
+def extract_bonus_points(pdf_text: str, config: dict, source_pdf: str, statement_date: str = "") -> list[dict]:
+    # Normalise statement_date to dd/mm/yyyy so it's consistent with regular transactions
+    if statement_date:
+        statement_date = parse_date_string(statement_date)
     markers = config.get("parsing", {}).get("bonus_points_section_markers", []) or []
     bonus_pattern = config.get("parsing", {}).get("bonus_points_pattern")
-    amount_regex = config.get("parsing", {}).get("amount_regex", r"\d+(?:,\d{3})*(?:\.\d{1,2})?")
+    amount_regex = config.get("parsing", {}).get("amount_regex", r"\d+(?:,\d{2,3})*(?:\.\d{1,2})?")
     lines = [normalize_whitespace(line) for line in pdf_text.splitlines() if normalize_whitespace(line)]
     found = []
 
-    if markers and bonus_pattern:
-        for idx, line in enumerate(lines):
-            if any(marker.upper() in line.upper() for marker in markers):
-                for bonus_line in lines[idx: idx + 6]:
-                    match = re.search(bonus_pattern, bonus_line, re.IGNORECASE)
-                    if match:
-                        points = match.groupdict().get("points") or match.group(1)
-                        pts = int(round(parse_amount(points)))
-                        if pts > 0:
-                            desc = bonus_line
-                            found.append((desc, pts))
-                break
+    # ── Strategy 1: detect numbered table rows directly ──────────────────────
+    # Format: "N Description NNNN pts"  (e.g. "1 Reward Points_on_Grocery 690 pts")
+    # This is more reliable than marker-based detection because the pattern is
+    # unique to the rewards summary table and cannot match regular transactions.
+    table_re = re.compile(r'^\d+\s+(\S.+?)\s+(\d[\d,]*)\s*pts\b', re.IGNORECASE)
+    for line in lines:
+        m = table_re.match(line)
+        if m:
+            desc = m.group(1).strip()
+            pts = int(round(parse_amount(m.group(2))))
+            if pts > 0:
+                found.append((desc, pts))
 
+    # ── Strategy 2: marker + bonus_pattern (config-driven) ───────────────────
+    # Find the section whose header line most closely matches a marker
+    # (prefer lines where the marker IS essentially the full line, not a substring
+    # of a long sentence, to avoid hitting "REWARD POINTS CAN BE REDEEMED..." etc.)
+    if not found and markers and bonus_pattern:
+        section_start = None
+        for idx, line in enumerate(lines):
+            for marker in markers:
+                if marker.upper() in line.upper():
+                    if section_start is None or len(line) < len(lines[section_start]):
+                        section_start = idx
+        if section_start is not None:
+            for bonus_line in lines[section_start + 1:]:
+                if re.match(r'^total\b', bonus_line, re.IGNORECASE):
+                    break
+                match = re.search(bonus_pattern, bonus_line, re.IGNORECASE)
+                if match:
+                    points = match.groupdict().get("points") or match.group(1)
+                    pts = int(round(parse_amount(points)))
+                    if pts > 0:
+                        found.append((bonus_line, pts))
+
+    # ── Strategy 3: last-resort keyword scan ─────────────────────────────────
     if not found:
         for line in lines:
             if re.search(r"\b(bonus|reward|cashback)\b", line, re.IGNORECASE):
@@ -343,23 +371,24 @@ def extract_bonus_points(pdf_text: str, config: dict, source_pdf: str) -> list[d
             continue
         seen_desc.add(desc)
         bonus_txns.append({
-            "date":           "",
-            "cardholder":     config.get("cardholders", {}).get("primary", ""),
-            "description":    desc,
-            "reward_points":  pts,
-            "amount":         0.0,
-            "is_credit":      False,
-            "source_pdf":     Path(source_pdf).name,
-            "earn_points":    False,
-            "category":       "Transfers & Payments",
-            "subcategory":    "Cashback & Reversals",
-            "notes":          "Bonus points summary",
+            "date":             statement_date,
+            "transaction_time": "",
+            "cardholder":       config.get("cardholders", {}).get("primary", ""),
+            "description":      desc,
+            "reward_points":    pts,
+            "amount":           0.0,
+            "is_credit":        False,
+            "source_pdf":       Path(source_pdf).name,
+            "earn_points":      False,
+            "category":         "Transfers & Payments",
+            "subcategory":      "Cashback & Reversals",
+            "notes":            "Bonus points summary",
             "skip_reward_calc": True,
         })
     return bonus_txns
 
 
-def extract_transactions(pdf_text: str, config: dict, source_pdf: str) -> list[dict]:
+def extract_transactions(pdf_text: str, config: dict, source_pdf: str, statement_date: str = "") -> list[dict]:
     """Extract transactions and bonus rewards from PDF text using config hints."""
     section = find_transaction_section(pdf_text, config)
     raw_rows = split_transaction_rows(section, config)
@@ -372,7 +401,7 @@ def extract_transactions(pdf_text: str, config: dict, source_pdf: str) -> list[d
         txn["source_pdf"] = Path(source_pdf).name
         transactions.append(txn)
 
-    bonus_txns = extract_bonus_points(pdf_text, config, source_pdf)
+    bonus_txns = extract_bonus_points(pdf_text, config, source_pdf, statement_date)
     transactions.extend(bonus_txns)
     logger.info(f"Extracted {len(transactions)} local transactions from {Path(source_pdf).name}")
     return transactions

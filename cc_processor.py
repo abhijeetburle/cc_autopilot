@@ -215,7 +215,7 @@ def process_statement(pdf_path: str, settings: dict) -> dict:
         # ── 4. Extract transactions locally ──
         logger.info("Step 3/7: Extracting transactions locally...")
         claude = make_claude_client(api_key) if api_key else None
-        raw_transactions = extract_transactions(pdf_text, config, str(pdf_path))
+        raw_transactions = extract_transactions(pdf_text, config, str(pdf_path), stmt_meta.get("statement_date", ""))
         logger.info(f"Raw transactions extracted: {len(raw_transactions)}")
 
         if not raw_transactions:

@@ -115,7 +115,7 @@ def parse_date(date_str: str, date_format: str = "%d/%m/%Y") -> tuple[int, int, 
     formats = [
         date_format,
         "%d/%m/%Y", "%d-%m-%Y", "%d-%b-%Y",
-        "%Y-%m-%d", "%d %b %Y", "%d/%m/%y",
+        "%Y-%m-%d", "%d %b %Y", "%d %b, %Y", "%d %B %Y", "%d %B, %Y", "%d/%m/%y",
     ]
     for fmt in formats:
         try:
