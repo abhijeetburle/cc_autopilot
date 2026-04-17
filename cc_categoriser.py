@@ -282,13 +282,24 @@ def categorise_transactions(
         result = None
         source = None
 
+        # If the transaction already carries a category, preserve it
+        if txn.get("category") and txn.get("subcategory"):
+            result = {
+                "category": txn["category"],
+                "subcategory": txn["subcategory"],
+                "earn_points": txn.get("earn_points", True),
+                "ai_guessed": txn.get("ai_guessed", False),
+            }
+            source = "preassigned"
+
         # 1a. Hard-coded vendor rules (highest priority)
-        rule = match_vendor_rule(desc, vendor_rules)
-        if rule:
-            cat, sub, earn = rule
-            result = {"category": cat, "subcategory": sub,
-                      "earn_points": earn, "ai_guessed": False}
-            source = "rule"
+        if not result:
+            rule = match_vendor_rule(desc, vendor_rules)
+            if rule:
+                cat, sub, earn = rule
+                result = {"category": cat, "subcategory": sub,
+                          "earn_points": earn, "ai_guessed": False}
+                source = "rule"
 
         # 1b. Vendor master lookup
         if not result:
@@ -314,22 +325,49 @@ def categorise_transactions(
     )
 
     # Pass 2: batch Claude categorisation for unknowns
-    if unknown_descs:
+    if unknown_descs and claude_client:
         # Batch in groups of 50 to stay within token limits
         batch_size = 50
         all_claude_results = {}
         for start in range(0, len(unknown_descs), batch_size):
             batch = unknown_descs[start:start + batch_size]
-            results = categorise_unknown_vendors_via_claude(batch, config, claude_client)
-            all_claude_results.update(results)
+            try:
+                results = categorise_unknown_vendors_via_claude(batch, config, claude_client)
+                all_claude_results.update(results)
+            except Exception as e:
+                logger.error(f"Claude API call failed for batch {start//batch_size + 1}: {e}")
+                # Continue with empty results for this batch - will be handled as "UNIDENTIFIED"
 
-        # Apply Claude results
+        # Apply Claude results (or fallback for failed batches)
         new_vendors = {}
         for idx, desc in zip(unknown_indices, unknown_descs):
-            cr = all_claude_results.get(desc, {"category": "Others", "subcategory": "Others", "ai_guessed": True})
+            cr = all_claude_results.get(desc)
+            if cr:
+                # Claude provided a result
+                categorised_txns[idx].update(cr)
+                categorised_txns[idx]["earn_points"] = True
+                categorised_txns[idx]["notes"] = "AI-guessed"
+            else:
+                # Claude failed or didn't provide result - use UNIDENTIFIED
+                cr = {"category": "UNIDENTIFIED", "subcategory": "UNIDENTIFIED", "ai_guessed": False}
+                categorised_txns[idx].update(cr)
+                categorised_txns[idx]["earn_points"] = True
+                categorised_txns[idx]["notes"] = "Claude API failed"
+            
+            # Collect for vendor master update
+            amt = categorised_txns[idx].get("amount", 0)
+            if desc not in new_vendors:
+                new_vendors[desc] = {"count": 0, "spend": 0.0, **cr}
+            new_vendors[desc]["count"] += 1
+            new_vendors[desc]["spend"] += amt
+    elif unknown_descs and not claude_client:
+        # No Claude — assign UNIDENTIFIED for unknowns
+        new_vendors = {}
+        for idx, desc in zip(unknown_indices, unknown_descs):
+            cr = {"category": "UNIDENTIFIED", "subcategory": "UNIDENTIFIED", "ai_guessed": False}
             categorised_txns[idx].update(cr)
             categorised_txns[idx]["earn_points"] = True
-            categorised_txns[idx]["notes"] = "AI-guessed"
+            categorised_txns[idx]["notes"] = "No AI available"
             # Collect for vendor master update
             amt = categorised_txns[idx].get("amount", 0)
             if desc not in new_vendors:
@@ -343,6 +381,9 @@ def categorise_transactions(
 
     # Pass 3: calculate reward points
     for txn in categorised_txns:
+        if txn.get("skip_reward_calc"):
+            txn["pct_reward"] = float(txn.get("pct_reward", 0.0) or 0.0)
+            continue
         pts, pct = calculate_reward_points(txn, config)
         txn["reward_points"] = pts
         txn["pct_reward"]    = pct

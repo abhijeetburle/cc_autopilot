@@ -2,13 +2,14 @@
 cc_extractor.py
 ---------------
 Extracts raw transaction rows from any credit card statement PDF.
-Uses pdfplumber for text extraction + Claude API for intelligent parsing.
+Uses pdfplumber for text extraction and config-driven parsing.
 Card-agnostic: behaviour driven by config YAML.
 """
 
 import re
 import json
 import logging
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
@@ -99,144 +100,266 @@ def extract_statement_metadata(pdf_text: str, config: dict) -> dict:
 
 
 # ─────────────────────────────────────────────
-#  CLAUDE-POWERED TRANSACTION EXTRACTION
+#  LOCAL TRANSACTION EXTRACTION
 # ─────────────────────────────────────────────
 
-def extract_transactions_via_claude(
-    pdf_text: str,
-    config: dict,
-    claude_client,
-    source_pdf: str
-) -> list[dict]:
-    """
-    Send PDF text to Claude with card-specific instructions.
-    Returns a list of transaction dicts.
-    """
-    card_name  = config.get("card", {}).get("name", "credit card")
-    currency   = config.get("parsing", {}).get("currency", "Rs.")
-    date_fmt   = config.get("parsing", {}).get("date_format", "%d/%m/%Y")
-    credit_ind = config.get("parsing", {}).get("credit_indicator", "Cr")
-    cardholders = config.get("cardholders", {})
-    ch_list = [v for v in cardholders.values() if v]
+def normalize_whitespace(text: str) -> str:
+    return re.sub(r"[ \t]+", " ", text.strip())
 
-    prompt = f"""You are a precise financial data extractor.
-Extract ALL transactions from this {card_name} statement PDF text.
 
-RULES:
-1. Return ONLY a JSON array — no markdown, no explanation, no preamble.
-2. Each transaction must have these exact keys:
-   - "date"          : string in DD/MM/YYYY format
-   - "cardholder"    : name as shown in statement (e.g. {', '.join(ch_list)})
-   - "description"   : full raw transaction description as printed
-   - "reward_points" : integer (0 if not shown or N/A)
-   - "amount"        : float, always POSITIVE
-   - "is_credit"     : boolean — true if this is a payment/refund/credit
-3. A transaction IS a credit if the amount has "{credit_ind}" suffix, or words like
-   "credit", "payment", "refund", "cashback", "waiver" in description.
-4. Include ALL rows: purchases, payments, credits, fees, GST charges, EMI entries,
-   cashback credits, surcharge waivers — everything.
-5. DO NOT skip any transaction. DO NOT summarise.
-6. If reward points column is absent (e.g. card has no points), use 0.
-7. Cardholder: use the section header name shown above each group of transactions.
-   Known cardholders: {', '.join(ch_list)}
-
-PDF TEXT:
-{pdf_text[:15000]}
-
-Return JSON array only:"""
-
-    response = claude_client.messages.create(
-        model="claude-sonnet-4-20250514",
-        max_tokens=4000,
-        messages=[{"role": "user", "content": prompt}]
-    )
-
-    raw = response.content[0].text.strip()
-
-    # Strip markdown code fences if present
-    raw = re.sub(r'^```(?:json)?\s*', '', raw, flags=re.MULTILINE)
-    raw = re.sub(r'\s*```$', '', raw, flags=re.MULTILINE)
-    raw = raw.strip()
-
+def parse_amount(amount_str: str) -> float:
+    cleaned = amount_str.replace(",", "").replace("(", "-").replace(")", "")
     try:
-        transactions = json.loads(raw)
-    except json.JSONDecodeError as e:
-        logger.error(f"JSON parse error: {e}\nRaw response: {raw[:500]}")
-        # Attempt to salvage partial JSON
+        return float(cleaned)
+    except ValueError:
+        return 0.0
+
+
+def parse_date_string(date_str: str, date_format: str = "%d/%m/%Y") -> str:
+    formats = [
+        date_format,
+        "%d/%m/%Y",
+        "%d-%m-%Y",
+        "%d-%b-%Y",
+        "%Y-%m-%d",
+        "%d %b %Y",
+        "%d %B %Y",
+    ]
+    for fmt in formats:
         try:
-            # Find the array
-            m = re.search(r'\[.*\]', raw, re.DOTALL)
-            if m:
-                transactions = json.loads(m.group(0))
-            else:
-                raise ValueError("No JSON array found in response")
-        except Exception:
-            logger.error("Could not salvage JSON — returning empty list")
-            return []
-
-    # Normalise and validate each row
-    normalised = []
-    for txn in transactions:
-        if not isinstance(txn, dict):
+            dt = datetime.strptime(date_str.strip(), fmt)
+            return dt.strftime("%d/%m/%Y")
+        except ValueError:
             continue
-        norm = {
-            "date":          str(txn.get("date", "")).strip(),
-            "cardholder":    str(txn.get("cardholder", "")).strip(),
-            "description":   str(txn.get("description", "")).strip(),
-            "reward_points": int(txn.get("reward_points", 0) or 0),
-            "amount":        abs(float(txn.get("amount", 0) or 0)),
-            "is_credit":     bool(txn.get("is_credit", False)),
-            "source_pdf":    Path(source_pdf).name,
-        }
-        if norm["date"] and norm["description"] and norm["amount"] > 0:
-            normalised.append(norm)
-
-    logger.info(f"Extracted {len(normalised)} transactions from {Path(source_pdf).name}")
-    return normalised
+    return date_str.strip()
 
 
-# ─────────────────────────────────────────────
-#  LARGE PDF HANDLING (multi-chunk)
-# ─────────────────────────────────────────────
+def build_date_regex(config: dict) -> str:
+    custom = config.get("parsing", {}).get("date_regex")
+    if custom:
+        return custom
 
-def extract_transactions_chunked(
-    pdf_text: str,
-    config: dict,
-    claude_client,
-    source_pdf: str,
-    chunk_size: int = 12000
-) -> list[dict]:
-    """
-    For large PDFs, split by page breaks and process in chunks.
-    Deduplicates across chunks by (date, description, amount).
-    """
-    if len(pdf_text) <= chunk_size:
-        return extract_transactions_via_claude(pdf_text, config, claude_client, source_pdf)
+    date_format = config.get("parsing", {}).get("date_format", "%d/%m/%Y")
+    if "%d/%m/%Y" in date_format:
+        return r"\d{1,2}/\d{1,2}/\d{4}"
+    if "%d-%m-%Y" in date_format:
+        return r"\d{1,2}-\d{1,2}-\d{4}"
+    if "%d-%b-%Y" in date_format or "%d-%B-%Y" in date_format:
+        return r"\d{1,2}-[A-Za-z]{3,9}-\d{4}"
+    return r"\d{1,2}[/-]\d{1,2}[/-]\d{2,4}"
 
-    logger.info(f"Large PDF ({len(pdf_text)} chars) — processing in chunks")
-    pages = pdf_text.split("--- PAGE BREAK ---")
 
-    # Group pages into chunks under chunk_size
-    chunks, current, current_len = [], [], 0
-    for page in pages:
-        if current_len + len(page) > chunk_size and current:
-            chunks.append("\n".join(current))
-            current, current_len = [], 0
-        current.append(page)
-        current_len += len(page)
+def find_transaction_section(pdf_text: str, config: dict) -> str:
+    headers = config.get("parsing", {}).get("transaction_section_headers", []) or []
+    end_markers = config.get("parsing", {}).get("transaction_section_end_markers", []) or []
+    text_upper = pdf_text.upper()
+
+    start = None
+    for header in headers:
+        idx = text_upper.find(header.upper())
+        if idx != -1 and (start is None or idx < start):
+            start = idx
+    if start is None:
+        return pdf_text
+
+    section = pdf_text[start:]
+    section_upper = section.upper()
+    end_index = None
+    for marker in end_markers:
+        idx = section_upper.find(marker.upper())
+        if idx != -1 and (end_index is None or idx < end_index):
+            end_index = idx
+    if end_index is not None:
+        section = section[:end_index]
+    return section
+
+
+def is_noise_line(line: str, config: dict) -> bool:
+    if not line:
+        return True
+
+    noise_patterns = [
+        r'^Page\s+\d+\s+of\s+\d+',
+        r'^---\s*PAGE\s*BREAK\s*---$',
+        r'^DATE\s*&\s*TIME',
+        r'^TRANSACTION\s+DESCRIPTION',
+        r'^REWARDS',
+        r'^AMOUNT',
+        r'^INTL\.#',
+        r'^POINTS',
+        r'^TRANSACTION\s+DETAILS',
+        r'^DOMESTIC\s+TRANSACTIONS',
+        r'^INTERNATIONAL\s+TRANSACTIONS',
+        r'^STATEMENT\s+PERIOD',
+        r'^EARNINGS',
+        r'^PREVIOUS\s+BALANCE',
+        r'^IMPORTANT\s+MESSAGES',
+        r'^FOR\s+EXCLUSIVE\s+OFFERS',
+        r'^INFINIA\s+CREDIT\s+CARD\s+STATEMENT',
+        r'^HDFC\s+Bank\s+Credit\s+Cards',
+        r'^ICICI\s+Bank\s+Credit\s+Card',
+        r'^CREDIT\s+CARD\s+STATEMENT',
+        r'^DOWNLOAD\s+THE\s+iMOBILE\s+PAY',
+        r'^OFFERS\s+ON\s+YOUR\s+CARD',
+        r'^HSN\s+CODE',
+        r'^STATEMENT\s+PERIOD',
+    ]
+    if any(re.match(pat, line, re.IGNORECASE) for pat in noise_patterns):
+        return True
+    if 'cid:' in line.lower():
+        return True
+    if re.search(r'\d{4}X{8}\d{4}', line):
+        return True
+    return False
+
+
+def split_transaction_rows(section_text: str, config: dict) -> list[str]:
+    date_regex = build_date_regex(config)
+    rows = []
+    current = None
+
+    for line in section_text.splitlines():
+        line = normalize_whitespace(line)
+        if not line or is_noise_line(line, config):
+            continue
+
+        if re.search(rf"\b{date_regex}\b", line):
+            if current:
+                rows.append(current)
+            current = line
+        elif current:
+            current += " " + line
+
     if current:
-        chunks.append("\n".join(current))
+        rows.append(current)
+    return rows
 
-    all_txns = []
-    seen = set()
-    for i, chunk in enumerate(chunks):
-        logger.info(f"Processing chunk {i+1}/{len(chunks)}")
-        txns = extract_transactions_via_claude(chunk, config, claude_client, source_pdf)
-        for t in txns:
-            key = (t["date"], t["description"][:30], t["amount"])
-            if key not in seen:
-                seen.add(key)
-                all_txns.append(t)
 
-    logger.info(f"Total after dedup across chunks: {len(all_txns)}")
-    return all_txns
+def parse_transaction_row(row_text: str, config: dict) -> Optional[dict]:
+    date_regex = build_date_regex(config)
+    amount_regex = config.get("parsing", {}).get("amount_regex", r"\d+(?:,\d{3})*(?:\.\d{1,2})?")
+    credit_indicator = config.get("parsing", {}).get("credit_indicator", "Cr")
+    expected_columns = [c.lower() for c in config.get("parsing", {}).get("expected_columns", []) or []]
+    has_points_column = any("point" in col or "cashback" in col for col in expected_columns)
+
+    date_match = re.search(rf"\b{date_regex}\b", row_text)
+    if not date_match:
+        return None
+
+    date_str = parse_date_string(date_match.group(0), config.get("parsing", {}).get("date_format", "%d/%m/%Y"))
+    remainder = row_text[date_match.end():].strip()
+    amount_match = re.search(rf"({amount_regex})\s*(?:{re.escape(credit_indicator)})?\s*[^0-9]*$", row_text, re.IGNORECASE)
+
+    reward_points = 0
+    amount = 0.0
+    if amount_match:
+        amount = parse_amount(amount_match.group(1))
+        if has_points_column:
+            prev_text = row_text[:amount_match.start()].strip()
+            prev_amounts = re.findall(amount_regex, prev_text)
+            if prev_amounts:
+                reward_points = int(round(parse_amount(prev_amounts[-1])))
+
+    is_credit = bool(re.search(rf"\b{re.escape(credit_indicator)}\b", row_text, re.IGNORECASE))
+    is_credit = is_credit or bool(re.search(r"\b(CREDIT|REFUND|PAYMENT|CASHBACK|WAIVER|REVERSAL)\b", row_text, re.IGNORECASE))
+
+    desc = remainder
+    if amount_match:
+        desc = desc[:desc.rfind(amount_match.group(1))].strip() if amount_match.group(1) in desc else desc
+    desc = re.sub(rf"\b{re.escape(credit_indicator)}\b", "", desc, flags=re.IGNORECASE)
+    desc = re.sub(r"\b(CR|DR)\b", "", desc, flags=re.IGNORECASE)
+    desc = re.sub(r"\b\d{9,}\b", "", desc)
+    # Clean HDFC specific patterns: remove time stamps like "| 16:25" and reward points like "+ 25 C"
+    desc = re.sub(r'\|\s*\d{1,2}:\d{2}', '', desc)
+    desc = re.sub(r'\+\s*\d+\s*C\b', '', desc)
+    # Clean ICICI specific patterns: remove trailing numbers like "87 1,750.03 IN 100%"
+    desc = re.sub(r'\d{1,3}\s+\d+(?:,\d{3})*(?:\.\d{1,2})?\s+IN\s+\d+%.*$', '', desc)
+    desc = normalize_whitespace(desc)
+
+    if not desc:
+        desc = row_text.strip()
+
+    if amount <= 0:
+        return None
+
+    return {
+        "date":           date_str,
+        "cardholder":     config.get("cardholders", {}).get("primary", ""),
+        "description":    desc,
+        "reward_points":  reward_points,
+        "amount":         amount,
+        "is_credit":      is_credit,
+        "source_pdf":     "",
+        "earn_points":    True,
+    }
+
+
+def extract_bonus_points(pdf_text: str, config: dict, source_pdf: str) -> list[dict]:
+    markers = config.get("parsing", {}).get("bonus_points_section_markers", []) or []
+    bonus_pattern = config.get("parsing", {}).get("bonus_points_pattern")
+    amount_regex = config.get("parsing", {}).get("amount_regex", r"\d+(?:,\d{3})*(?:\.\d{1,2})?")
+    lines = [normalize_whitespace(line) for line in pdf_text.splitlines() if normalize_whitespace(line)]
+    found = []
+
+    if markers and bonus_pattern:
+        for idx, line in enumerate(lines):
+            if any(marker.upper() in line.upper() for marker in markers):
+                for bonus_line in lines[idx: idx + 6]:
+                    match = re.search(bonus_pattern, bonus_line, re.IGNORECASE)
+                    if match:
+                        points = match.groupdict().get("points") or match.group(1)
+                        pts = int(round(parse_amount(points)))
+                        if pts > 0:
+                            desc = bonus_line
+                            found.append((desc, pts))
+                break
+
+    if not found:
+        for line in lines:
+            if re.search(r"\b(bonus|reward|cashback)\b", line, re.IGNORECASE):
+                amounts = re.findall(amount_regex, line)
+                if amounts:
+                    pts = int(round(parse_amount(amounts[-1])))
+                    if pts > 0:
+                        found.append((line, pts))
+
+    bonus_txns = []
+    seen_desc = set()
+    for desc, pts in found:
+        if desc in seen_desc:
+            continue
+        seen_desc.add(desc)
+        bonus_txns.append({
+            "date":           "",
+            "cardholder":     config.get("cardholders", {}).get("primary", ""),
+            "description":    desc,
+            "reward_points":  pts,
+            "amount":         0.0,
+            "is_credit":      False,
+            "source_pdf":     Path(source_pdf).name,
+            "earn_points":    False,
+            "category":       "Transfers & Payments",
+            "subcategory":    "Cashback & Reversals",
+            "notes":          "Bonus points summary",
+            "skip_reward_calc": True,
+        })
+    return bonus_txns
+
+
+def extract_transactions(pdf_text: str, config: dict, source_pdf: str) -> list[dict]:
+    """Extract transactions and bonus rewards from PDF text using config hints."""
+    section = find_transaction_section(pdf_text, config)
+    raw_rows = split_transaction_rows(section, config)
+
+    transactions = []
+    for row in raw_rows:
+        txn = parse_transaction_row(row, config)
+        if not txn:
+            continue
+        txn["source_pdf"] = Path(source_pdf).name
+        transactions.append(txn)
+
+    bonus_txns = extract_bonus_points(pdf_text, config, source_pdf)
+    transactions.extend(bonus_txns)
+    logger.info(f"Extracted {len(transactions)} local transactions from {Path(source_pdf).name}")
+    return transactions

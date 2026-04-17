@@ -4,7 +4,7 @@
 
 ![Python](https://img.shields.io/badge/python-3.9%2B-blue?style=flat-square)
 ![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)
-![Powered by Claude](https://img.shields.io/badge/AI-Claude%20Sonnet-orange?style=flat-square)
+![AI Optional](https://img.shields.io/badge/AI-Optional-orange?style=flat-square)
 ![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey?style=flat-square)
 
 ---
@@ -13,12 +13,11 @@
 
 **cc_autopilot** is a local Python tool that watches a folder on your computer for new credit card statement PDFs. When one arrives, it automatically:
 
-1. **Extracts** every transaction from the PDF (Claude AI handles any layout, any bank)
+1. **Extracts** every transaction from the PDF using local parsing (no API costs for extraction)
 2. **Categorises** each transaction using your personal vendor history + AI for unknowns
 3. **Deduplicates** against your existing transaction history (safe to re-process the same PDF)
 4. **Appends** new rows to a local CSV ledger
-5. **Writes** an AI-generated advisory — what changed, where you overspent, what to optimise
-6. **Regenerates** a self-contained interactive HTML dashboard (`my-cc-report.html`)
+5. **Regenerates** a self-contained interactive HTML dashboard (`my-cc-report.html`)
 
 No server. No database. No cloud sync. Everything lives in CSVs and a single HTML file on your machine.
 
@@ -43,8 +42,7 @@ $ python watch_statements.py
   ════════════════════════════════════════════════════════
   ✅ HDFC_Nov_2025.pdf processed successfully
   📊 47 new transactions added
-  📝 Insights → output/insights_2025-11_hdfc_infinia.md
-  📈 Report   → output/my-cc-report.html
+   Report   → output/my-cc-report.html
   ════════════════════════════════════════════════════════
 ```
 
@@ -69,14 +67,14 @@ PDF dropped into watch folder
         ▼
 ┌──────────────────────────────┐
 │  cc_extractor.py             │  pdfplumber extracts raw text
-│  + Claude Sonnet             │  AI parses transactions from any layout
+│  + config-driven parsing     │  Local regex + layout parsing (no API costs)
 └──────────────────────────────┘
         │  raw transactions
         ▼
 ┌──────────────────────────────┐
 │  cc_categoriser.py           │  1. Hard-coded vendor rules  (config YAML)
 │                              │  2. Your vendor history      (CSV lookup)
-│  + Claude Sonnet             │  3. AI for unknown vendors   (batch call)
+│  + Claude Sonnet             │  3. AI for unknown vendors   (optional)
 └──────────────────────────────┘
         │  categorised + enriched
         ▼
@@ -87,12 +85,8 @@ PDF dropped into watch folder
         │  updated ledger
         ▼
 ┌──────────────────────────────┐
-│  cc_insights.py              │  Claude writes the statement advisory (.md)
-└──────────────────────────────┘
-        │
-        ▼
-┌──────────────────────────────┐
-│  cc_report.py                │  Rebuild my-cc-report.html from scratch
+│  cc_report.py                │  Copy HTML template to output location
+│                              │  Template loads data dynamically from CSV
 └──────────────────────────────┘
 ```
 
@@ -115,7 +109,7 @@ Adding support for a new card takes ~10 minutes — copy the template, add your 
 ## Requirements
 
 - Python 3.9+
-- An [Anthropic API key](https://console.anthropic.com/) (~$0.10–0.30 per statement)
+- An [Anthropic API key](https://console.anthropic.com/) (optional — ~$0.05–0.15 per statement for unknown vendor categorization)
 - Credit card PDFs with a text layer (downloaded from your bank's portal, not photographed)
 
 ---
@@ -155,13 +149,14 @@ pip3 install -r requirements.txt
 
 ## Setup
 
-### 1. Get an Anthropic API key
+### 1. Get an Anthropic API key (optional)
 
-Sign up at [console.anthropic.com](https://console.anthropic.com/) → API Keys → Create key.
+For AI-powered categorization of unknown vendors, sign up at [console.anthropic.com](https://console.anthropic.com/) → API Keys → Create key.
 
 Your key looks like: `sk-ant-api03-...`
 
-> **Cost:** A typical monthly statement costs ~₹8–25 ($0.10–0.30 USD) to process.  
+> **Cost:** Only for unknown vendor categorization (~₹3–10 per statement).  
+> **Without API key:** Unknown vendors are categorized as "Others / Others".  
 > Anthropic does not use API data for training by default.
 
 ### 2. Configure settings.yaml
@@ -264,18 +259,19 @@ python cc_processor.py /path/to/statement.pdf /path/to/settings.yaml
 cc_autopilot/
 ├── watch_statements.py        ← Entry point — run this
 ├── cc_processor.py            ← Pipeline orchestrator
-├── cc_extractor.py            ← PDF extraction + Claude transaction parser
+├── cc_extractor.py            ← Local PDF extraction + parsing
 ├── cc_categoriser.py          ← Rule-based + AI categorisation
 ├── cc_ledger.py               ← CSV ledger + deduplication
-├── cc_insights.py             ← Claude statement advisory
-├── cc_report.py               ← Interactive HTML report
+├── cc_report.py               ← HTML report template copier
 │
 ├── settings.yaml              ← Your config (gitignored — never commit this)
 ├── settings.yaml.example      ← Template — copy to settings.yaml
 ├── requirements.txt
 │
 ├── config/
+│   ├── my-cc-report.html      ← Interactive HTML dashboard template
 │   ├── hdfc_infinia.yaml      ← HDFC Infinia — ready to use
+│   ├── icici_amazon_pay.yaml  ← ICICI Amazon Pay — ready to use
 │   └── _template.yaml         ← Template for new cards
 │
 └── README.md
@@ -324,7 +320,7 @@ Fully customisable per card in `config/<card>.yaml`.
 - **Anthropic's API privacy policy:** [anthropic.com/privacy](https://www.anthropic.com/privacy) — API data not used for training by default
 - **The HTML report is offline** — no tracking, no analytics
 - **Never commit `settings.yaml`** — it contains your API key. It is listed in `.gitignore` by default.
-- **No-AI mode:** set `api_key: ""` to skip all Claude calls. Unknown vendors categorise as `Others / Others`.
+- **No-AI mode:** set `api_key: ""` to skip all Claude calls. Transaction extraction works locally, unknown vendors categorise as `UNIDENTIFIED / UNIDENTIFIED`.
 
 ---
 
@@ -342,7 +338,7 @@ Download the statement directly from your bank's internet banking portal as a PD
 Add a YAML config for your card. Copy `config/_template.yaml` and add the unique strings from your statement PDF header as `pdf_fingerprints`.
 
 **`API key invalid / authentication error`**  
-Ensure your key in `settings.yaml` starts with `sk-ant-` and has no extra spaces or quotes inside the value.
+Ensure your key in `settings.yaml` starts with `sk-ant-` and has no extra spaces or quotes inside the value. Processing will continue with `UNIDENTIFIED` categories for unknown vendors.
 
 **Watcher not detecting new PDFs instantly**  
 Install `watchdog` for instant file detection. Without it, the system falls back to 10-second polling:
@@ -394,9 +390,9 @@ Open a GitHub issue with:
 
 - [ ] Config YAMLs for popular cards (SBI SimplyCLICK, Axis Magnus, ICICI Coral, Amex MRCC, Flipkart Axis)
 - [ ] `--backfill` mode: process an entire folder of historical PDFs in chronological order
-- [ ] Optional OCR support for scanned PDFs (`pytesseract`)
 - [ ] Desktop notification when processing completes
 - [ ] Auto-open report in browser after processing
+- [x] Local PDF extraction (no API costs for transaction parsing)
 
 ---
 
@@ -409,9 +405,10 @@ Open a GitHub issue with:
 ## Acknowledgements
 
 Built with:
-- [Claude](https://www.anthropic.com/) (Anthropic) — transaction extraction, categorisation, insights generation
+- [Claude](https://www.anthropic.com/) (Anthropic) — AI categorisation for unknown vendors (optional)
 - [pdfplumber](https://github.com/jsvine/pdfplumber) — PDF text layer extraction
 - [Chart.js](https://www.chartjs.org/) — interactive dashboard charts
+- [PapaParse](https://www.papaparse.com/) — CSV parsing in the HTML report
 - [watchdog](https://github.com/gorakhargosh/watchdog) — filesystem event watching
 
 ---

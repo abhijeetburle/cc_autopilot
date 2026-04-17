@@ -35,7 +35,7 @@ from cc_extractor import (
     extract_pdf_text,
     detect_card_config,
     extract_statement_metadata,
-    extract_transactions_chunked,
+    extract_transactions,
 )
 from cc_categoriser import (
     load_vendor_master,
@@ -212,12 +212,10 @@ def process_statement(pdf_path: str, settings: dict) -> dict:
         stmt_meta["source_pdf"] = pdf_path.name
         logger.info(f"Statement date: {stmt_meta.get('statement_date', 'unknown')}")
 
-        # ── 4. Extract transactions via Claude ──
-        logger.info("Step 3/7: Extracting transactions via Claude...")
-        claude = make_claude_client(api_key)
-        raw_transactions = extract_transactions_chunked(
-            pdf_text, config, claude, str(pdf_path)
-        )
+        # ── 4. Extract transactions locally ──
+        logger.info("Step 3/7: Extracting transactions locally...")
+        claude = make_claude_client(api_key) if api_key else None
+        raw_transactions = extract_transactions(pdf_text, config, str(pdf_path))
         logger.info(f"Raw transactions extracted: {len(raw_transactions)}")
 
         if not raw_transactions:
@@ -242,9 +240,23 @@ def process_statement(pdf_path: str, settings: dict) -> dict:
 
         # ── 7. Categorise ──
         logger.info(f"Step 5/7: Categorising {len(to_add)} new transactions...")
-        categorised = categorise_transactions(
-            to_add, config, vendor_map, claude, vendor_master_path
-        )
+        try:
+            categorised = categorise_transactions(
+                to_add, config, vendor_map, claude, vendor_master_path
+            )
+        except Exception as e:
+            logger.error(f"Categorisation failed: {e}")
+            # Fallback: mark all transactions as UNIDENTIFIED
+            for txn in to_add:
+                if not txn.get("category"):
+                    txn.update({
+                        "category": "UNIDENTIFIED",
+                        "subcategory": "UNIDENTIFIED", 
+                        "earn_points": True,
+                        "ai_guessed": False,
+                        "notes": "Categorisation failed"
+                    })
+            categorised = to_add
 
         # ── 8. Convert to ledger rows ──
         new_ledger_rows = [txn_to_ledger_row(txn, config) for txn in categorised]
@@ -257,13 +269,23 @@ def process_statement(pdf_path: str, settings: dict) -> dict:
         # ── 10. Generate insights ──
         logger.info("Step 7/7: Generating insights...")
         summary = summarise_new_transactions(new_ledger_rows)
-        insights_text = generate_insights_via_claude(
-            summary, all_rows, new_ledger_rows, stmt_meta, config, claude
-        )
-        insights_path = write_insights_report(
-            insights_text, summary, new_ledger_rows, stmt_meta, config, output_dir
-        )
-        result["insights_path"] = insights_path
+        if claude:
+            try:
+                insights_text = generate_insights_via_claude(
+                    summary, all_rows, new_ledger_rows, stmt_meta, config, claude
+                )
+                insights_path = write_insights_report(
+                    insights_text, summary, new_ledger_rows, stmt_meta, config, output_dir
+                )
+                result["insights_path"] = insights_path
+            except Exception as e:
+                logger.error(f"Insights generation failed: {e}")
+                logger.info("Continuing without insights report")
+                result["insights_path"] = None
+        else:
+            logger.info("Skipping insights generation (no API key)")
+            insights_path = None
+            result["insights_path"] = None
 
         # ── 11. Regenerate report ──
         rpt = regenerate_report(ledger_path, config, report_path)
