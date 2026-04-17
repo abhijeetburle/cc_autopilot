@@ -270,6 +270,9 @@ def parse_transaction_row(row_text: str, config: dict) -> Optional[dict]:
     desc = re.sub(r"\b(CR|DR)\b", "", desc, flags=re.IGNORECASE)
     desc = re.sub(r"\b\d{9,}\b", "", desc)
     # Clean HDFC specific patterns: remove time stamps like "| 16:25" and reward points like "+ 25 C"
+    # Extract timestamp before removing it (used to distinguish same-day same-amount transactions)
+    time_match = re.search(r'\|\s*(\d{1,2}:\d{2})', desc)
+    transaction_time = time_match.group(1) if time_match else ""
     desc = re.sub(r'\|\s*\d{1,2}:\d{2}', '', desc)
     desc = re.sub(r'\+\s*\d+\s*C\b', '', desc)
     # Clean ICICI specific patterns: remove trailing numbers like "87 1,750.03 IN 100%"
@@ -283,14 +286,15 @@ def parse_transaction_row(row_text: str, config: dict) -> Optional[dict]:
         return None
 
     return {
-        "date":           date_str,
-        "cardholder":     config.get("cardholders", {}).get("primary", ""),
-        "description":    desc,
-        "reward_points":  reward_points,
-        "amount":         amount,
-        "is_credit":      is_credit,
-        "source_pdf":     "",
-        "earn_points":    True,
+        "date":             date_str,
+        "transaction_time": transaction_time,
+        "cardholder":       config.get("cardholders", {}).get("primary", ""),
+        "description":      desc,
+        "reward_points":    reward_points,
+        "amount":           amount,
+        "is_credit":        is_credit,
+        "source_pdf":       "",
+        "earn_points":      True,
     }
 
 

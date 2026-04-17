@@ -16,7 +16,7 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 FIELDNAMES = [
-    "Year", "Month", "Day", "Date", "Cardholder",
+    "Year", "Month", "Day", "Date", "Time", "Cardholder",
     "Transaction Description", "Category", "SubCategory",
     "Reward Points", "Amount (Rs.)", "Is Credit",
     "% Reward", "Notes", "Source PDF", "Bank", "Card"
@@ -44,7 +44,8 @@ def load_ledger(ledger_path: str) -> list[dict]:
 
 def build_dedup_key(row: dict) -> tuple:
     """
-    Deduplication key: (Date, first-30-chars of description, amount).
+    Deduplication key: (Date, Time, first-30-chars of description, amount).
+    Time distinguishes same-day same-amount same-vendor transactions.
     Normalises amount to float for consistent comparison.
     """
     try:
@@ -54,7 +55,8 @@ def build_dedup_key(row: dict) -> tuple:
     desc = str(row.get("Transaction Description", "") or
                row.get("description", "")).strip()[:30]
     date = str(row.get("Date", "") or row.get("date", "")).strip()
-    return (date, desc, amt)
+    time = str(row.get("Time", "") or row.get("transaction_time", "")).strip()
+    return (date, time, desc, amt)
 
 
 # ─────────────────────────────────────────────
@@ -85,7 +87,8 @@ def deduplicate(
 
         desc = str(txn.get("description", "")).strip()[:30]
         date = str(txn.get("date", "")).strip()
-        key  = (date, desc, abs(amt))
+        time = str(txn.get("transaction_time", "")).strip()
+        key  = (date, time, desc, abs(amt))
 
         if key in existing_keys or key in seen_new:
             skipped.append(txn)
@@ -152,6 +155,7 @@ def txn_to_ledger_row(txn: dict, config: dict) -> dict:
         "Month":                  month,
         "Day":                    day,
         "Date":                   date_str,
+        "Time":                   str(txn.get("transaction_time", "") or "").strip(),
         "Cardholder":             cardholder,
         "Transaction Description": txn.get("description", ""),
         "Category":               cat,
