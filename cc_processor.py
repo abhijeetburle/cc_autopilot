@@ -269,6 +269,7 @@ def process_statement(pdf_path: str, settings: dict) -> dict:
         # ── 10. Generate insights ──
         logger.info("Step 7/7: Generating insights...")
         summary = summarise_new_transactions(new_ledger_rows)
+        insights_path = None
         if claude:
             try:
                 insights_text = generate_insights_via_claude(
@@ -281,6 +282,7 @@ def process_statement(pdf_path: str, settings: dict) -> dict:
             except Exception as e:
                 logger.error(f"Insights generation failed: {e}")
                 logger.info("Continuing without insights report")
+                insights_path = None
                 result["insights_path"] = None
         else:
             logger.info("Skipping insights generation (no API key)")
