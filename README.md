@@ -105,6 +105,7 @@ Any credit card with a **text-based PDF statement** (not scanned/image). The sys
 | Card | Config file | Status |
 |------|------------|--------|
 | HDFC Bank Infinia | `config/hdfc_infinia.yaml` | ✅ Included |
+| ICICI Amazon Pay | `config/icici_amazon_pay.yaml` | ✅ Included |
 | Any other card | `config/_template.yaml` | ⚙️ Copy & configure |
 
 Adding support for a new card takes ~10 minutes — copy the template, add your PDF fingerprints and reward rules.

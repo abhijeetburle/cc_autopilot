@@ -1,0 +1,53 @@
+# ============================================================
+# cc_autopilot — Settings Example
+# ============================================================
+# Copy this file to settings.yaml and fill in your details:
+#   cp settings.yaml.example settings.yaml
+#
+# settings.yaml is gitignored — never commit it.
+# ============================================================
+
+# Your Anthropic API key
+# Get one at: https://console.anthropic.com/
+# Leave empty ("") to run in rule-only mode (no AI calls)
+api_key: "sk-ant-YOUR-API-KEY-HERE"
+
+paths:
+  # ── INPUT ──────────────────────────────────────────────────
+  # Folder to watch — drop new statement PDFs here
+  watch_dir: "~/Documents/cc_statements/incoming"
+
+  # Card config files — don't change unless you move the config/ folder
+  config_dir: "./config"
+
+  # ── DATA FILES ─────────────────────────────────────────────
+  # Main transaction ledger (created automatically on first run)
+  ledger_csv: "~/Documents/cc_statements/data/transactions_master.csv"
+
+  # Vendor → category lookup (updated automatically with new vendors)
+  vendor_master_csv: "~/Documents/cc_statements/data/category_vendor_master.csv"
+
+  # ── OUTPUT ─────────────────────────────────────────────────
+  # Where insights .md files are written (one per statement processed)
+  output_dir: "~/Documents/cc_statements/output"
+
+  # The live HTML report — rebuilt every time a new statement is processed
+  report_html: "~/Documents/cc_statements/output/my-cc-report.html"
+
+  # Log files
+  log_dir: "~/Documents/cc_statements/logs"
+
+  # Tracks which PDFs have already been processed (prevents re-processing)
+  processed_log: "~/Documents/cc_statements/data/processed_pdfs.txt"
+
+# ── OPTIONS ────────────────────────────────────────────────
+options:
+  # Seconds to wait after a PDF appears before processing
+  # (gives time for the file write to finish)
+  file_settle_seconds: 3
+
+  # Open the HTML report in your browser automatically after processing
+  auto_open_report: false
+
+  # Max transactions to extract per PDF via Claude
+  max_transactions_per_pdf: 500
