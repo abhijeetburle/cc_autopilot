@@ -248,7 +248,9 @@ def parse_transaction_row(row_text: str, config: dict) -> Optional[dict]:
 
     date_str = parse_date_string(date_match.group(0), config.get("parsing", {}).get("date_format", "%d/%m/%Y"))
     remainder = row_text[date_match.end():].strip()
-    amount_match = re.search(rf"({amount_regex})\s*(?:{re.escape(credit_indicator)})?\s*[^0-9]*$", row_text, re.IGNORECASE)
+    # Use a broader amount regex that handles Indian lakh format (e.g. 1,00,000.00)
+    broad_amount_regex = amount_regex.replace(r"(?:,\d{3})*", r"(?:,\d{2,3})*")
+    amount_match = re.search(rf"({broad_amount_regex})\s*(?:{re.escape(credit_indicator)})?\s*[^0-9]*$", row_text, re.IGNORECASE)
 
     reward_points = 0
     amount = 0.0
@@ -256,7 +258,7 @@ def parse_transaction_row(row_text: str, config: dict) -> Optional[dict]:
         amount = parse_amount(amount_match.group(1))
         if has_points_column:
             prev_text = row_text[:amount_match.start()].strip()
-            prev_amounts = re.findall(amount_regex, prev_text)
+            prev_amounts = re.findall(broad_amount_regex, prev_text)
             if prev_amounts:
                 reward_points = int(round(parse_amount(prev_amounts[-1])))
 
@@ -278,6 +280,13 @@ def parse_transaction_row(row_text: str, config: dict) -> Optional[dict]:
     # Clean ICICI specific patterns: remove trailing numbers like "87 1,750.03 IN 100%"
     desc = re.sub(r'\d{1,3}\s+\d+(?:,\d{3})*(?:\.\d{1,2})?\s+IN\s+\d+%.*$', '', desc)
     desc = normalize_whitespace(desc)
+
+    # Strip leading transaction-type prefixes defined in config (e.g. "EMI" column in HDFC PDFs)
+    strip_prefixes = config.get("parsing", {}).get("strip_description_prefixes", [])
+    for prefix in strip_prefixes:
+        if re.match(rf"^{re.escape(prefix)}\s+", desc, re.IGNORECASE):
+            desc = desc[len(prefix):].strip()
+            break
 
     if not desc:
         desc = row_text.strip()

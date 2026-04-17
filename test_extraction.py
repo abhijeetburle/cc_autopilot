@@ -116,7 +116,7 @@ def test_extract_transactions():
     assert 'description' in txn
     assert 'amount' in txn
     assert 'is_credit' in txn
-    assert 'HINDUSTAN PETROLEUM' in txn['description'].upper()
+    assert 'ACC HOSPITALITY' in txn['description'].upper()
     print("✓ extract_transactions (HDFC)")
 
     # Test ICICI

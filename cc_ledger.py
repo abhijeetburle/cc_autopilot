@@ -96,6 +96,12 @@ def deduplicate(
             to_add.append(txn)
             seen_new.add(key)
 
+    if skipped:
+        print(f"\n  Duplicates skipped ({len(skipped)}):")
+        for txn in skipped:
+            amt = abs(float(txn.get("amount", 0)))
+            print(f"    [DUP] {txn.get('date', ''):>10}  {txn.get('description', '')[:40]:<40}  ₹{amt:>10.2f}")
+        print()
     logger.info(f"New: {len(to_add)} | Duplicates skipped: {len(skipped)}")
     return to_add, skipped
 
