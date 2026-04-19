@@ -82,6 +82,33 @@ def load_settings(settings_path: str) -> dict:
         return yaml.safe_load(f)
 
 
+def append_unidentified_to_todo(output_dir: str, transactions: list[dict], source_pdf: str):
+    """Append unidentified transaction descriptions to category_todo.csv for manual review."""
+    import csv
+    todo_path = Path(output_dir) / "category_todo.csv"
+    
+    # Create file with headers if it doesn't exist
+    if not todo_path.exists():
+        with open(todo_path, "w", newline="", encoding="utf-8") as f:
+            writer = csv.writer(f)
+            writer.writerow(["Transaction Description", "Amount", "Date", "Source PDF", "Added On"])
+    
+    # Append unidentified transactions
+    with open(todo_path, "a", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        for txn in transactions:
+            if txn.get("category") == "UNIDENTIFIED":
+                writer.writerow([
+                    txn.get("description", ""),
+                    txn.get("amount", 0),
+                    txn.get("date", ""),
+                    source_pdf,
+                    datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                ])
+    
+    logger.info(f"Appended {sum(1 for txn in transactions if txn.get('category') == 'UNIDENTIFIED')} unidentified transactions to {todo_path}")
+
+
 # ─────────────────────────────────────────────
 #  CLAUDE CLIENT FACTORY
 # ─────────────────────────────────────────────
@@ -257,6 +284,8 @@ def process_statement(pdf_path: str, settings: dict) -> dict:
                         "notes": "Categorisation failed"
                     })
             categorised = to_add
+            # Append unidentified transactions to todo list for manual review
+            append_unidentified_to_todo(output_dir, categorised, pdf_path.name)
 
         # ── 8. Convert to ledger rows ──
         new_ledger_rows = [txn_to_ledger_row(txn, config) for txn in categorised]
