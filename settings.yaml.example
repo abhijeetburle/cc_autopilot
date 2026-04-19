@@ -32,7 +32,7 @@ paths:
   output_dir: "~/Documents/cc_statements/output"
 
   # The live HTML report — rebuilt every time a new statement is processed
-  report_html: "~/Documents/cc_statements/output/my-cc-report.html"
+  report_html: "~/Documents/cc_statements/output/CredInsights.html"
 
   # Log files
   log_dir: "~/Documents/cc_statements/logs"

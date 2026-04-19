@@ -1,7 +1,7 @@
 """
 cc_report.py
 ------------
-Rebuilds my-cc-report.html from the current transactions_master CSV.
+Rebuilds CredInsights.html from the current transactions_master CSV.
 CSS and JS are kept as separate raw strings (not inside the f-string)
 to completely avoid {{ }} brace-escaping issues.
 """
@@ -683,7 +683,7 @@ def build_report_html(precomputed: dict, config: dict, today_str: str) -> str:
         "<head>\n"
         "<meta charset=\"UTF-8\">\n"
         "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n"
-        f"<title>my-cc-report \u00b7 {card_name}</title>\n"
+        f"<title>CredInsights \u00b7 {card_name}</title>\n"
         "<link rel=\"preconnect\" href=\"https://fonts.googleapis.com\">\n"
         "<link href=\"https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&family=Lora:ital,wght@0,400;0,500;0,600;1,400&family=DM+Mono:wght@400;500&display=swap\" rel=\"stylesheet\">\n"
         "<script src=\"https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js\"></script>\n"
@@ -693,7 +693,7 @@ def build_report_html(precomputed: dict, config: dict, today_str: str) -> str:
 
         "<div class=\"header\">\n"
         "  <div class=\"header-left\">\n"
-        "    <h1>my-cc-<span>report</span></h1>\n"
+        "    <h1>Cred<span>Insights</span></h1>\n"
         f"    <div class=\"sub\">{card_name} \u00b7 {cardholder} \u00b7 {date_range}</div>\n"
         "  </div>\n"
         "  <div class=\"header-right\">\n"
@@ -828,7 +828,7 @@ def build_report_html(precomputed: dict, config: dict, today_str: str) -> str:
         "</div>\n\n"
 
         "<div class=\"footer\">\n"
-        "  <div class=\"logo\">my-cc-<span>report</span></div>\n"
+        "  <div class=\"logo\">Cred<span>Insights</span></div>\n"
         f"  <span>{card_name}</span>\n"
         f"  <span>Generated {today_str} &middot; {date_range}</span>\n"
         "</div>\n\n"

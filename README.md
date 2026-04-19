@@ -17,7 +17,7 @@
 2. **Categorises** each transaction using your personal vendor history + AI for unknowns
 3. **Deduplicates** against your existing transaction history (safe to re-process the same PDF)
 4. **Appends** new rows to a local CSV ledger
-5. **Regenerates** a self-contained interactive HTML dashboard (`my-cc-report.html`)
+5. **Regenerates** a self-contained interactive HTML dashboard (`CredInsights.html`)
 
 No server. No database. No cloud sync. Everything lives in CSVs and a single HTML file on your machine.
 
@@ -31,7 +31,7 @@ $ python watch_statements.py
   💳 cc_autopilot — Credit Card Statement Processor
   ════════════════════════════════════════════════════════
   Watch folder : ~/Documents/cc_statements/incoming
-  Report       : ~/Documents/cc_statements/output/my-cc-report.html
+  Report       : ~/Documents/cc_statements/output/CredInsights.html
   ════════════════════════════════════════════════════════
   Drop any credit card statement PDF into the watch folder.
   Press Ctrl+C to stop.
@@ -42,11 +42,11 @@ $ python watch_statements.py
   ════════════════════════════════════════════════════════
   ✅ HDFC_Nov_2025.pdf processed successfully
   📊 47 new transactions added
-   Report   → output/my-cc-report.html
+   Report   → output/CredInsights.html
   ════════════════════════════════════════════════════════
 ```
 
-The report (`my-cc-report.html`) includes 6 interactive panels:
+The report (`CredInsights.html`) includes 6 interactive panels:
 
 | Panel | What you see |
 |---|---|
@@ -175,7 +175,7 @@ paths:
   ledger_csv:        "~/Documents/cc_statements/data/transactions_master.csv"
   vendor_master_csv: "~/Documents/cc_statements/data/category_vendor_master.csv"
   output_dir:        "~/Documents/cc_statements/output"
-  report_html:       "~/Documents/cc_statements/output/my-cc-report.html"
+  report_html:       "~/Documents/cc_statements/output/CredInsights.html"
   log_dir:           "~/Documents/cc_statements/logs"
   processed_log:     "~/Documents/cc_statements/data/processed_pdfs.txt"
 ```
@@ -269,7 +269,7 @@ cc_autopilot/
 ├── requirements.txt
 │
 ├── config/
-│   ├── my-cc-report.html      ← Interactive HTML dashboard template
+│   ├── CredInsights.html      ← Interactive HTML dashboard template
 │   ├── hdfc_infinia.yaml      ← HDFC Infinia — ready to use
 │   ├── icici_amazon_pay.yaml  ← ICICI Amazon Pay — ready to use
 │   └── _template.yaml         ← Template for new cards
