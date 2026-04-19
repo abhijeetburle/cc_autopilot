@@ -53,7 +53,7 @@ def extract_pdf_text(pdf_path: str, passwords: list = None) -> str:
             raise PermissionError(f"PDF file is locked or not accessible: {e}")
         
         # Check for actual password error
-        if not any(keyword in error_msg for keyword in ["password", "encrypted", "security"]):
+        if not any(keyword in error_msg for keyword in ["password", "encrypted", "security", "pdfpasswordincorrect", "passwordincorrect"]):
             # Not a password error and not a lock — might be corrupted, not a PDF, etc.
             if passwords:
                 # Still worth trying passwords in case error message is ambiguous

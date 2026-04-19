@@ -9,7 +9,7 @@ Orchestrates the full pipeline for a single new statement PDF:
   5. Deduplicate against existing ledger
   6. Append to ledger
   7. Generate insights report
-  8. Regenerate my-cc-report.html
+  8. Regenerate CredInsights.html
 
 Usage (standalone):
   python cc_processor.py /path/to/statement.pdf
@@ -222,8 +222,11 @@ def process_statement(pdf_path: str, settings: dict) -> dict:
         logger.info("Step 1/7: Extracting PDF text...")
         from cc_extractor import PasswordError
         try:
+            passwords = []
+            for card_id, cfg in all_configs.items():
+                passwords = cfg.get("passwords", [])
             # Try without password first
-            pdf_text = extract_pdf_text(str(pdf_path))
+            pdf_text = extract_pdf_text(str(pdf_path), passwords)
         except PermissionError as pe:
             # File is locked or not accessible — don't mark as processed, will retry
             logger.error(f"❌ Cannot access {pdf_path.name} — file is locked or not accessible")
@@ -317,6 +320,8 @@ def process_statement(pdf_path: str, settings: dict) -> dict:
             categorised = categorise_transactions(
                 to_add, config, vendor_map, claude, vendor_master_path
             )
+            # Append unidentified transactions to todo list for manual review
+            append_unidentified_to_todo(output_dir, categorised, pdf_path.name)
         except Exception as e:
             logger.error(f"Categorisation failed: {e}")
             # Fallback: mark all transactions as UNIDENTIFIED
@@ -330,8 +335,6 @@ def process_statement(pdf_path: str, settings: dict) -> dict:
                         "notes": "Categorisation failed"
                     })
             categorised = to_add
-            # Append unidentified transactions to todo list for manual review
-            append_unidentified_to_todo(output_dir, categorised, pdf_path.name)
 
         # ── 8. Convert to ledger rows ──
         new_ledger_rows = [txn_to_ledger_row(txn, config) for txn in categorised]
