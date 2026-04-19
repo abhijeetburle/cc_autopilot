@@ -22,19 +22,71 @@ logger = logging.getLogger(__name__)
 #  PDF TEXT EXTRACTION
 # ─────────────────────────────────────────────
 
-def extract_pdf_text(pdf_path: str) -> str:
-    """Extract all text from a PDF, page by page."""
+def extract_pdf_text(pdf_path: str, passwords: list = None) -> str:
+    """Extract all text from a PDF, page by page.
+    Tries passwords if PDF is password-protected.
+    Raises PasswordError if all passwords fail.
+    Raises PermissionError if file is locked/not accessible.
+    """
+    import errno
+    if passwords is None:
+        passwords = []
+    
     pages = []
+    last_error = None
+    
+    # Try without password first
     try:
         with pdfplumber.open(pdf_path) as pdf:
             for page in pdf.pages:
                 text = page.extract_text(x_tolerance=3, y_tolerance=3)
                 if text:
                     pages.append(text)
+        return "\n\n--- PAGE BREAK ---\n\n".join(pages)
     except Exception as e:
-        logger.error(f"pdfplumber failed on {pdf_path}: {e}")
-        raise
-    return "\n\n--- PAGE BREAK ---\n\n".join(pages)
+        last_error = e
+        
+        # Check if it's a file lock / permission issue (not password)
+        error_msg = str(e).lower()
+        if any(keyword in error_msg for keyword in ["permission denied", "file is in use", "locked", "io error"]):
+            logger.error(f"Cannot access {pdf_path}: {e}")
+            raise PermissionError(f"PDF file is locked or not accessible: {e}")
+        
+        # Check for actual password error
+        if not any(keyword in error_msg for keyword in ["password", "encrypted", "security"]):
+            # Not a password error and not a lock — might be corrupted, not a PDF, etc.
+            if passwords:
+                # Still worth trying passwords in case error message is ambiguous
+                pass
+            else:
+                # No passwords to try, so fail immediately
+                logger.error(f"Failed to extract {pdf_path}: {e}")
+                raise ValueError(f"Failed to extract PDF: {e}")
+    
+    # If password-protected, try each password
+    if passwords:
+        for pwd in passwords:
+            try:
+                with pdfplumber.open(pdf_path, password=pwd) as pdf:
+                    for page in pdf.pages:
+                        text = page.extract_text(x_tolerance=3, y_tolerance=3)
+                        if text:
+                            pages.append(text)
+                logger.info(f"Successfully opened {pdf_path} with provided password")
+                return "\n\n--- PAGE BREAK ---\n\n".join(pages)
+            except Exception as e:
+                last_error = e
+                continue
+    
+    # All attempts failed
+    error_msg = f"Failed to extract {pdf_path}: {last_error}"
+    logger.error(error_msg)
+    raise PasswordError(error_msg) if passwords else ValueError(error_msg)
+
+
+class PasswordError(Exception):
+    """Raised when PDF requires password and all attempts fail."""
+    pass
 
 
 # ─────────────────────────────────────────────

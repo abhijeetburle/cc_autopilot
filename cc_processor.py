@@ -212,17 +212,63 @@ def process_statement(pdf_path: str, settings: dict) -> dict:
     }
 
     try:
+        # ── 0. Load configs early (needed for password attempts) ──
+        logger.info("Loading card configs...")
+        all_configs = load_all_configs(config_dir)
+        if not all_configs:
+            raise ValueError(f"No card configs found in {config_dir}")
+        
         # ── 1. Extract PDF text ──
         logger.info("Step 1/7: Extracting PDF text...")
-        pdf_text = extract_pdf_text(str(pdf_path))
+        from cc_extractor import PasswordError
+        try:
+            # Try without password first
+            pdf_text = extract_pdf_text(str(pdf_path))
+        except PermissionError as pe:
+            # File is locked or not accessible — don't mark as processed, will retry
+            logger.error(f"❌ Cannot access {pdf_path.name} — file is locked or not accessible")
+            logger.error(f"   {pe}")
+            result["status"] = "file_locked"
+            result["error"] = str(pe)
+            result["elapsed_seconds"] = round(time.time() - start_time, 1)
+            # Do NOT mark as processed — will retry next time
+            return result
+        except PasswordError as pe:
+            # Try passwords from all available configs
+            logger.info("PDF is password-protected, trying passwords from configs...")
+            pdf_text = None
+            passwords_tried = 0
+            
+            for card_id, cfg in all_configs.items():
+                passwords = cfg.get("passwords", [])
+                for pwd in passwords:
+                    passwords_tried += 1
+                    try:
+                        logger.info(f"  Trying password from {card_id}...")
+                        pdf_text = extract_pdf_text(str(pdf_path), passwords=[pwd])
+                        logger.info(f"✅ Successfully extracted with password from {card_id}")
+                        break
+                    except (PasswordError, Exception):
+                        continue
+                if pdf_text:
+                    break
+            
+            if not pdf_text:
+                logger.error(f"❌ Failed to extract {pdf_path.name} — tried {passwords_tried} password(s) from all configs")
+                result["status"] = "password_failed"
+                result["error"] = f"PDF is password-protected and all {passwords_tried} password attempts failed"
+                result["elapsed_seconds"] = round(time.time() - start_time, 1)
+                # Do NOT mark as processed — will retry next time
+                return result
+        except Exception as e:
+            logger.error(f"Failed to extract PDF text: {e}")
+            raise
+        
         if not pdf_text.strip():
             raise ValueError(f"No text extracted from {pdf_path.name} — may be scanned/image PDF")
 
         # ── 2. Detect card config ──
         logger.info("Step 2/7: Detecting card config...")
-        all_configs = load_all_configs(config_dir)
-        if not all_configs:
-            raise ValueError(f"No card configs found in {config_dir}")
 
         config = detect_card_config(pdf_text, all_configs)
         if not config:
